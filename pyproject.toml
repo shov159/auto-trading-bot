@@ -1,0 +1,23 @@
+[project]
+name = "auto-trading-bot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "alpaca-backtrader-api>=0.8.0",
+    "alpaca-trade-api>=0.48",
+    "alpha-vantage<3.0.0",
+    "backtrader>=1.9.78.123",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.0",
+    "pandas>=2.3.3",
+    "python-dotenv>=1.2.1",
+    "yfinance>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pylint>=4.0.4",
+    "pytest>=9.0.2",
+]

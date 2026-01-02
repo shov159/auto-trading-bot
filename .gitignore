@@ -1,0 +1,38 @@
+# Environment variables
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / Packaging
+dist/
+build/
+*.egg
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific logs or data
+*.log
+agent-tools/
+
