@@ -67,13 +67,23 @@ class MarketScanner:
                     if len(df) < 60: # Ensure enough data
                         continue
 
-                    # 1. Calculate Volatility (Std Dev of Daily Returns)
-                    # We want to avoid assets that are moving 5% a day on average recently
-                    df['Daily_Ret'] = df['Close'].pct_change()
-                    # Use average of absolute daily moves as a proxy for "daily risk"
-                    recent_vol = df['Daily_Ret'].abs().mean()
+                    # 1. Calculate Volatility (ATR)
+                    # Calculate True Range
+                    high_low = df['High'] - df['Low']
+                    high_close = (df['High'] - df['Close'].shift()).abs()
+                    low_close = (df['Low'] - df['Close'].shift()).abs()
+                    
+                    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                    
+                    # 14-day ATR
+                    atr = true_range.rolling(window=14).mean().iloc[-1]
+                    
+                    # Normalized Volatility (ATR as % of Price)
+                    # We compare this to the max_volatility threshold (e.g., 0.05 for 5%)
+                    current_price = df['Close'].iloc[-1]
+                    volatility_pct = atr / current_price if current_price else 0
 
-                    if recent_vol > max_volatility:
+                    if volatility_pct > max_volatility:
                         continue
 
                     # 2. Calculate Momentum (3-Month Return)
@@ -83,7 +93,7 @@ class MarketScanner:
                     metrics.append({
                         'ticker': ticker,
                         'momentum': momentum,
-                        'volatility': recent_vol
+                        'volatility': volatility_pct
                     })
 
                 except Exception: # pylint: disable=broad-exception-caught

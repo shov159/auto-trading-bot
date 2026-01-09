@@ -3,10 +3,15 @@ Live/Paper Trading Script for Alpaca.
 Connects the RegimeStrategy to Alpaca Brokerage.
 """
 import os
+import sys
 from datetime import datetime, timedelta
 import backtrader as bt
 from alpaca_backtrader_api import AlpacaStore
 from dotenv import load_dotenv
+
+# Add project root to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.strategy import RegimeStrategy
 from src.scanner import MarketScanner
 
