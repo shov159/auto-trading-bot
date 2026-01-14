@@ -1,245 +1,304 @@
 """
-AI Trader Module
+AI Trader - Standalone Version (No Lumibot)
+Directly uses alpaca-py for Trading, Data, and News.
 """
 import os
+import time
 from datetime import datetime
-from lumibot.brokers import Alpaca
-from lumibot.backtesting import YahooDataBacktesting
-from lumibot.strategies.strategy import Strategy
-from lumibot.traders import Trader
-from openai import OpenAI
+import requests
 from dotenv import load_dotenv
-from alpaca.data.historical.news import NewsClient
-from alpaca.data.requests import NewsRequest
+
+# Google Gemini
+from google import genai
+
+# Alpaca SDK
 from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.historical.news import NewsClient
+from alpaca.data.requests import StockLatestTradeRequest, NewsRequest
 
 # Load environment variables
 load_dotenv()
 
-# Constants
+# Configuration
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-class SentimentStrategy(Strategy):
-    """
-    A Strategy that combines Technical Analysis (RSI) with AI-based Sentiment Analysis.
-    """
-    # pylint: disable=attribute-defined-outside-init, arguments-differ
+# Portfolio Settings
+SYMBOLS = ["SPY", "NVDA", "TSLA", "AAPL", "AMD", "MSFT"]
+CASH_AT_RISK = 0.15  # Allocate 15% of available cash per trade
 
-    def initialize(self):
-        """
-        Initialize the strategy with the trading symbol and risk parameter.
-        """
-        self.symbol = self.parameters.get("symbol", "SPY")
-        self.cash_at_risk = self.parameters.get("cash_at_risk", 0.5)
-        self.sleeptime = "1H" # Trading frequency
-        self.last_trade = None
-
-        # Initialize OpenAI Client (Mock if key is missing)
-        if OPENAI_API_KEY:
-            self.api = OpenAI(api_key=OPENAI_API_KEY)
+class AITrader:
+    def __init__(self):
+        print("--- Initializing AI Trader (Standalone) ---")
+        
+        # 1. Initialize Google Gemini
+        if GOOGLE_API_KEY:
+            self.gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
         else:
-            self.api = None
-            print("WARNING: No OpenAI API Key found. Using mock sentiment.")
+            self.gemini_client = None
+            print("[WARNING] No Google API Key found.")
 
-        # Initialize Alpaca Clients
+        # 2. Initialize Alpaca Clients
         if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+            self.trading_client = TradingClient(
+                api_key=ALPACA_API_KEY,
+                secret_key=ALPACA_SECRET_KEY,
+                paper=ALPACA_PAPER
+            )
+            self.data_client = StockHistoricalDataClient(
+                api_key=ALPACA_API_KEY,
+                secret_key=ALPACA_SECRET_KEY
+            )
             self.news_client = NewsClient(
                 api_key=ALPACA_API_KEY,
                 secret_key=ALPACA_SECRET_KEY
             )
-            self.trading_client = TradingClient(
-                api_key=ALPACA_API_KEY,
-                secret_key=ALPACA_SECRET_KEY,
-                paper=True
-            )
         else:
-            self.news_client = None
-            self.trading_client = None
-            print("WARNING: No Alpaca Credentials found. News/Trading checks will fail.")
+            raise ValueError("Alpaca API Keys are missing!")
 
-    def position_sizing(self):
-        """
-        Calculate the quantity of shares to buy based on cash at risk.
-        """
-        # pylint: disable=no-member
-        cash = self.get_cash()
-        last_price = self.get_last_price(self.symbol)
-        quantity = round(cash * self.cash_at_risk / last_price, 0)
-        return last_price, quantity
+        self.post_telegram_message("🚀 AI Trader Started (Standalone Mode)")
 
-    def get_sentiment(self):
-        """
-        Fetch news from Alpaca and analyze sentiment using GPT-4o.
-        Returns: Tuple(Signal, Confidence)
-        """
-        # 1. Fetch News from Alpaca
-        news_headlines = []
-        if self.news_client:
+    def post_telegram_message(self, message):
+        """Send notification to Telegram."""
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             try:
-                request = NewsRequest(
-                    symbols=self.symbol,
-                    limit=10
-                )
-                # pylint: disable=no-member
-                news_items = self.news_client.get_news(request).news
-                news_headlines = [item.headline for item in news_items]
-                print(f"[DEBUG] Headlines fetched for {self.symbol}:")
-                for _, h in enumerate(news_headlines[:5]): # Print first 5
-                    print(f"  - {h}")
-            except Exception as e: # pylint: disable=broad-exception-caught
-                print(f"Error fetching Alpaca news: {e}")
+                url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+                requests.post(url, json=payload, timeout=5)
+            except Exception as e:
+                print(f"[ERROR] Telegram failed: {e}")
+        else:
+            print(f"[TELEGRAM MOCK] {message}")
 
-        # Fallback if no news found or client missing
+    def check_market_open(self):
+        """Check if the market is open."""
+        try:
+            clock = self.trading_client.get_clock()
+            return clock.is_open
+        except Exception as e:
+            print(f"[ERROR] Market check failed: {e}")
+            return False
+
+    def get_price(self, symbol):
+        """Fetch latest price via Alpaca Data API."""
+        try:
+            req = StockLatestTradeRequest(symbol_or_symbols=symbol)
+            res = self.data_client.get_stock_latest_trade(req)
+            return res[symbol].price
+        except Exception as e:
+            print(f"[ERROR] Price fetch failed for {symbol}: {e}")
+            return None
+
+    def get_position(self, symbol):
+        """Check if we currently hold a position in the symbol."""
+        try:
+            # get_all_positions returns a list of Position objects
+            positions = self.trading_client.get_all_positions()
+            for p in positions:
+                if p.symbol == symbol:
+                    return float(p.qty)
+            return 0
+        except Exception as e:
+            print(f"[ERROR] Position check failed: {e}")
+            return 0
+
+    def get_account_cash(self):
+        """Get available cash from the account."""
+        try:
+            account = self.trading_client.get_account()
+            # use 'cash' or 'buying_power'
+            return float(account.cash)
+        except Exception as e:
+            print(f"[ERROR] Account check failed: {e}")
+            return 0.0
+
+    def calculate_quantity(self, price):
+        """Calculate shares to buy based on risk management."""
+        cash = self.get_account_cash()
+        if cash <= 0:
+            return 0
+        
+        allocation = cash * CASH_AT_RISK
+        if price <= 0:
+            return 0
+            
+        qty = int(allocation // price)
+        return qty
+
+    def get_sentiment(self, symbol):
+        """Fetch news and analyze with Gemini."""
+        news_headlines = []
+        try:
+            # Fetch News
+            req = NewsRequest(symbols=symbol, limit=10)
+            news_set = self.news_client.get_news(req)
+            
+            # Handle Alpaca news response structure (list of objects)
+            if hasattr(news_set, 'news'):
+                items = news_set.news
+            else:
+                items = news_set # It might be a list directly
+
+            for item in items:
+                if hasattr(item, 'headline'):
+                    news_headlines.append(item.headline)
+                elif isinstance(item, dict):
+                    news_headlines.append(item.get('headline', str(item)))
+            
+            print(f"[DEBUG] Fetched {len(news_headlines)} headlines for {symbol}")
+
+        except Exception as e:
+            print(f"[ERROR] News fetch failed: {e}")
+
+        # Mock fallback if empty
         if not news_headlines:
-            print("No real news found. Using mock data for fallback.")
+            print(f"[INFO] No news for {symbol}, using mock.")
             news_headlines = [
-                f"Market data for {self.symbol} suggests strong upward momentum.",
-                f"Analysts upgrade {self.symbol} price target based on recent earnings beat.",
-                "Tech sector showing resilience despite inflation concerns."
+                f"{symbol} shows strong technicals.",
+                f"Analysts upgrade {symbol}.",
+                "Market rally continues."
             ]
 
+        # Analyze with Gemini
         prompt = f"""
-        You are a financial analyst. Analyze the sentiment of the following news headlines for {self.symbol}:
+        You are a financial analyst. Analyze the sentiment of these headlines for {symbol}:
         {news_headlines}
-
         Return a single word: BUY, SELL, or HOLD.
         """
-
-        # 2. Call LLM
-        if not self.api:
-            return "BUY", 0.95 # Mock fallback
+        
+        if not self.gemini_client:
+            return "BUY", 0.9 # Fallback
 
         try:
-            response = self.api.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a helpful financial trading assistant."},
-                    {"role": "user", "content": prompt}
-                ]
+            response = self.gemini_client.models.generate_content(
+                model='gemini-flash-latest', contents=prompt
             )
-            content = response.choices[0].message.content.strip().upper()
-            print(f"[DEBUG] OpenAI Raw Response: {content}")
+            decision = response.text.strip().upper()
+            
+            # Retry on 503
+            if "503" in decision or "UNAVAILABLE" in decision: 
+                # (Though usually it raises an exception, sometimes text might reflect error)
+                raise Exception("Service Unavailable")
 
-            if "BUY" in content:
-                return "BUY", 0.9
-            if "SELL" in content:
-                return "SELL", 0.9
-            return "HOLD", 0.5
-        except Exception as e: # pylint: disable=broad-exception-caught
-            print(f"Error fetching sentiment: {e}")
-            return "HOLD", 0.0
-
-    def on_trading_iteration(self):
-        """
-        Main trading logic executed every iteration (sleeptime).
-        """
-        try:
-            # Check Market Status
-            is_market_open = True
-            if self.trading_client:
+        except Exception as e:
+            print(f"[Gemini Error] {e}")
+            if "503" in str(e):
+                time.sleep(5)
                 try:
-                    clock = self.trading_client.get_clock()
-                    is_market_open = clock.is_open
-                except Exception as e: # pylint: disable=broad-exception-caught
-                    print(f"Error checking market clock: {e}")
+                    print("Retrying Gemini...")
+                    response = self.gemini_client.models.generate_content(
+                        model='gemini-flash-latest', contents=prompt
+                    )
+                    decision = response.text.strip().upper()
+                except:
+                    return "HOLD", 0.0
+            else:
+                return "HOLD", 0.0
 
-            # pylint: disable=no-member
-            last_price, quantity = self.position_sizing()
-            sentiment, confidence = self.get_sentiment()
+        # Parse logic
+        if "BUY" in decision:
+            return "BUY", 0.9
+        if "SELL" in decision:
+            return "SELL", 0.9
+        return "HOLD", 0.5
 
-            # 3. Calculate Technical Indicators (RSI)
-            # Fetch 30 days of daily data
-            bars = self.get_historical_prices(self.symbol, 30, "day")
-            df = bars.df
-
-            # Simple RSI Calculation (14-period)
-            delta = df["close"].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            current_rsi = rsi.iloc[-1] if not rsi.empty else 50
-
-            dt_str = self.get_datetime().strftime("%Y-%m-%d %H:%M")
-            print(
-                f"[{dt_str}] {self.symbol} Price: {last_price:.2f} | "
-                f"RSI: {current_rsi:.2f} | AI: {sentiment} ({confidence})"
+    def submit_buy_order(self, symbol, qty, price):
+        """Submit a Market Buy Order."""
+        print(f" -> Submitting BUY for {symbol} ({qty} shares)...")
+        try:
+            order_data = MarketOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
             )
+            self.trading_client.submit_order(order_data)
+            self.post_telegram_message(
+                f"✅ BUY Executed for {symbol}: {qty} shares @ ~${price:.2f}"
+            )
+        except Exception as e:
+            print(f"[ERROR] Buy Order Failed: {e}")
+            self.post_telegram_message(f"⚠️ Buy Failed for {symbol}: {e}")
 
-            # 4. Hybrid Decision Logic
-            # BUY: AI says BUY AND RSI is not Overbought (>70)
-            if sentiment == "BUY" and current_rsi < 70:
-                if self.last_trade == "sell":
-                    self.sell_all()
+    def submit_sell_order(self, symbol, qty):
+        """Submit a Market Sell Order (Close Position)."""
+        print(f" -> Submitting SELL for {symbol} ({qty} shares)...")
+        try:
+            # We can use close_position to sell all
+            self.trading_client.close_position(symbol_or_asset_id=symbol)
+            self.post_telegram_message(
+                f"🛑 SELL Executed for {symbol} (Sentiment Shift)"
+            )
+        except Exception as e:
+            print(f"[ERROR] Sell Order Failed: {e}")
+            self.post_telegram_message(f"⚠️ Sell Failed for {symbol}: {e}")
 
-                if self.get_position(self.symbol) is None: # Only buy if no position
-                    if is_market_open:
-                        order = self.create_order(
-                            self.symbol,
-                            quantity,
-                            "buy",
-                            take_profit_price=last_price * 1.05, # 5% Take Profit
-                            stop_loss_price=last_price * 0.98   # 2% Stop Loss
-                        )
-                        self.submit_order(order)
-                        self.last_trade = "buy"
-                        print(f" -> EXECUTING BUY ORDER ({quantity} shares)")
+    def run_trading_cycle(self):
+        """Execute one pass through the portfolio."""
+        print(f"\n--- Starting Trading Cycle: {datetime.now()} ---")
+        
+        # Check Market Status
+        if not self.check_market_open():
+            print("[MARKET CLOSED] Waiting for open...")
+            # We continue anyway to test logic, or you can return here.
+            # For this task, we'll proceed but log it.
+
+        for symbol in SYMBOLS:
+            print(f"\nProcessing {symbol}...")
+            
+            # 1. Get Price
+            price = self.get_price(symbol)
+            if price is None:
+                continue
+            
+            # 2. Get Sentiment
+            sentiment, confidence = self.get_sentiment(symbol)
+            print(f"[{symbol}] Price: ${price:.2f} | Signal: {sentiment} ({confidence})")
+
+            # 3. Check Position
+            current_qty = self.get_position(symbol)
+            print(f"   Current Position: {current_qty} shares")
+
+            # 4. Decision Logic
+            if sentiment == "BUY":
+                if current_qty == 0:
+                    # Calculate size
+                    buy_qty = self.calculate_quantity(price)
+                    if buy_qty > 0:
+                        self.submit_buy_order(symbol, buy_qty, price)
                     else:
-                        print(
-                            f"[MARKET CLOSED] AI Signal is BUY. "
-                            f"If market were open, I would buy {quantity} shares of {self.symbol}."
-                        )
+                        print("   [INFO] Insufficient cash.")
+                else:
+                    print("   [INFO] Already holding. Holding.")
 
-            # SELL: AI says SELL OR RSI is Overbought (>70)
-            elif sentiment == "SELL" or current_rsi > 70:
-                if self.last_trade == "buy" or self.get_position(self.symbol):
-                    if is_market_open:
-                        self.sell_all()
-                        self.last_trade = "sell"
-                        print(" -> EXECUTING SELL/CLOSE ORDER")
-                    else:
-                        print(
-                            "[MARKET CLOSED] Signal is SELL. "
-                            "If market were open, I would close position."
-                        )
+            elif sentiment == "SELL":
+                if current_qty > 0:
+                    self.submit_sell_order(symbol, current_qty)
+                else:
+                    print("   [INFO] No position to sell.")
 
-        except Exception as e: # pylint: disable=broad-exception-caught
-            print(f"[ERROR] Strategy Loop Failed: {e}")
+            # Rate Limit Sleep
+            time.sleep(2)
+
+        print("\n--- Cycle Complete ---")
 
 if __name__ == "__main__":
-    # Configuration
-    IS_LIVE = True # Change to True to connect to Alpaca
+    try:
+        trader = AITrader()
+        
+        while True:
+            trader.run_trading_cycle()
+            print("Sleeping for 1 hour...")
+            time.sleep(3600)
 
-    if IS_LIVE:
-        # Live / Paper Trading Mode
-        print("Starting Live Trading Agent...")
-        broker = Alpaca({
-            "API_KEY": ALPACA_API_KEY,
-            "API_SECRET": ALPACA_SECRET_KEY,
-            "PAPER": True  # Force Paper Trading
-        })
-
-        strategy = SentimentStrategy(
-            broker=broker,
-            parameters={"symbol": "SPY", "cash_at_risk": 0.5}
-        )
-
-        trader = Trader()
-        trader.add_strategy(strategy)
-        trader.run_all()
-
-    else:
-        # Backtesting Mode
-        print("Starting AI Strategy Backtest...")
-        backtesting_start = datetime(2023, 1, 1)
-        backtesting_end = datetime(2023, 12, 31)
-
-        SentimentStrategy.backtest(
-            YahooDataBacktesting,
-            backtesting_start,
-            backtesting_end,
-            parameters={"symbol": "SPY", "cash_at_risk": 0.5}
-        )
+    except KeyboardInterrupt:
+        print("\n[STOP] AI Trader stopped by user.")
+    except Exception as e:
+        print(f"\n[CRITICAL ERROR] {e}")
