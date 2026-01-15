@@ -1,80 +1,101 @@
-"""
-Tests for the trading strategy logic using mock data.
-"""
-import pytest
-import backtrader as bt
+import unittest
 import pandas as pd
 import numpy as np
-from src.strategy import RegimeStrategy
+from src.strategy_logic import StrategyLogic
+from src.risk_manager import RiskManager
 
-def create_scenario_feed(trend='sideways', volatility=0.01, periods=100):
-    """
-    Creates a mock backtrader feed with specific trend characteristics.
+class TestStrategyLogic(unittest.TestCase):
+    def setUp(self):
+        # Config
+        self.config = {
+            'risk': {
+                'max_position_pct': 0.02,
+                'stop_loss_pct': 0.02,
+                'take_profit_pct': 0.05
+            },
+            'strategy': {
+                'rsi_period': 14,
+                'sma_fast': 50
+            }
+        }
+        self.rm = RiskManager(self.config)
+        self.strategy = StrategyLogic(self.rm, self.config)
 
-    Args:
-        trend (str): 'bull', 'bear', or 'sideways'.
-        volatility (float): Daily volatility (standard deviation).
-        periods (int): Number of days.
-    """
-    date_range = pd.date_range(start='2024-01-01', periods=periods, freq='B')
+        # Create 60 days of data to satisfy SMA(50) requirement
+        dates = pd.date_range(start='2023-01-01', periods=60, freq='D')
+        
+        # Base price uptrend
+        prices = np.linspace(100, 150, 60)
+        
+        # DataFrame
+        self.data = pd.DataFrame({
+            'close': prices,
+            'high': prices + 1,
+            'low': prices - 1,
+            'volume': np.full(60, 1000)
+        }, index=dates)
 
-    # Determine drift based on trend
-    if trend == 'bull':
-        drift = 0.001 # Positive daily drift
-    elif trend == 'bear':
-        drift = -0.001 # Negative daily drift
-    else: # sideways
-        drift = 0.0
+    def test_generate_buy_signal(self):
+        # ... (Same setup logic) ...
+        # Creating a more robust dataset that GUARANTEES all conditions.
+        # This is tricky with strictly generated data because indicators conflict 
+        # (e.g., Deep RSI dip usually kills MACD).
+        
+        # Instead of fighting the math, let's Mock the indicator functions 
+        # to return exactly what we need for the LOGIC test.
+        # This verifies the Strategy Logic class, not the Indicator Math (which is tested separately).
+        
+        from unittest.mock import patch
+        
+        # Create dummy data just to satisfy type checks and length checks
+        dates = pd.date_range(start='2023-01-01', periods=60, freq='D')
+        df = pd.DataFrame({
+            'close': np.full(60, 100.0),
+            'high': np.full(60, 105.0),
+            'low': np.full(60, 95.0),
+            'volume': np.full(60, 1000.0)
+        }, index=dates)
+        
+        # Set latest values to be plausible
+        df.iloc[-1, df.columns.get_loc('close')] = 100.0
+        df.iloc[-1, df.columns.get_loc('volume')] = 2000.0 # High volume
+        
+        # Patch the indicators imported in src.strategy_logic
+        with patch('src.strategy_logic.calculate_rsi') as mock_rsi, \
+             patch('src.strategy_logic.calculate_sma') as mock_sma, \
+             patch('src.strategy_logic.calculate_macd') as mock_macd:
+            
+            # Setup returns to satisfy BUY conditions
+            # 1. RSI < 45
+            mock_rsi.return_value = pd.Series(np.full(60, 30.0), index=dates) 
+            
+            # 2. Price (100) > SMA (90)
+            mock_sma.return_value = pd.Series(np.full(60, 90.0), index=dates)
+            
+            # 3. MACD > Signal
+            mock_macd.return_value = (
+                pd.Series(np.full(60, 5.0), index=dates), # MACD Line
+                pd.Series(np.full(60, 2.0), index=dates)  # Signal Line
+            )
+            
+            sentiment_score = 0.8 # > 0.5
+            account_value = 100000
+            
+            signal = self.strategy.generate_signal("TEST", df, sentiment_score, account_value)
+            
+            self.assertEqual(signal['action'], 'BUY', f"Signal failed: {signal.get('reason')}")
+            self.assertTrue('stop_loss' in signal)
+            self.assertTrue('take_profit' in signal)
 
-    # Generate returns
-    np.random.seed(42) # Fixed seed for reproducibility
-    returns = np.random.normal(drift, volatility, len(date_range))
-    price_path = 100 * (1 + returns).cumprod()
+    def test_generate_sell_signal(self):
+        # Test Sentiment Sell Trigger
+        df = self.data.copy()
+        sentiment_score = -0.5 # < -0.2
+        
+        signal = self.strategy.generate_signal("TEST", df, sentiment_score, 100000)
+        
+        self.assertEqual(signal['action'], 'SELL')
+        self.assertIn("Negative Sentiment", signal['reason'])
 
-    df = pd.DataFrame(index=date_range)
-    df['open'] = price_path
-    df['high'] = price_path * 1.01
-    df['low'] = price_path * 0.99
-    df['close'] = price_path
-    df['volume'] = np.random.randint(1000, 10000, len(date_range))
-
-    # pylint: disable=unexpected-keyword-arg
-    return bt.feeds.PandasData(dataname=df)
-
-@pytest.mark.parametrize("market_condition", [
-    ("bull"),
-    ("bear"),
-    ("sideways")
-])
-def test_strategy_scenarios(market_condition):
-    """
-    Tests the strategy against diverse market conditions.
-
-    Scenarios:
-    - Bull Market: Expect successful execution, likely positive return (if momentum works).
-    - Bear Market: Expect execution, stop losses might trigger.
-    - Sideways: Expect execution.
-    """
-    cerebro = bt.Cerebro()
-
-    # Feed 1: Benchmark/Regime (SPY)
-    # We keep this relatively stable/sideways to allow the strategy to function normally
-    # or we could also parameterize this to test regime switching.
-    # For this test, we use a standard sideways feed for regime to keep it simple.
-    regime_feed = create_scenario_feed(trend='sideways', volatility=0.01)
-
-    # Feed 2: Trading Asset (NVDA) - This follows the parameterized trend
-    trading_feed = create_scenario_feed(trend=market_condition, volatility=0.02)
-
-    cerebro.adddata(regime_feed)
-    cerebro.adddata(trading_feed)
-
-    cerebro.addstrategy(RegimeStrategy)
-    cerebro.broker.setcash(100000.0)
-
-    # Run
-    results = cerebro.run()
-    assert len(results) > 0
-
-    # Check if we still have cash (didn't blow up to negative, though BT usually handles this)
-    assert cerebro.broker.getvalue() > 0
+if __name__ == '__main__':
+    unittest.main()

@@ -10,6 +10,7 @@ dependencies = [
     "alpaca-trade-api>=0.48",
     "alpha-vantage<3.0.0",
     "backtrader>=1.9.78.123",
+    "feedparser>=6.0.12",
     "google-genai>=1.57.0",
     "google-generativeai>=0.8.6",
     "ipython>=9.9.0",

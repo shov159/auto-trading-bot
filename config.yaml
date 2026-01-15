@@ -1,0 +1,121 @@
+# Trading Configuration
+
+trading:
+  symbols:
+    # Indices & ETFs (The Anchor)
+    - "SPY" # S&P 500
+    - "QQQ" # Nasdaq 100
+    - "IWM" # Russell 2000
+    - "SMH" # Semiconductors ETF
+    - "XLF" # Financials ETF
+
+    # Mag 7 (Tech Giants)
+    - "AAPL"
+    - "MSFT"
+    - "NVDA"
+    - "GOOGL"
+    - "AMZN"
+    - "META"
+    - "TSLA"
+
+    # Semiconductors & AI
+    - "AMD"
+    - "AVGO"
+    - "QCOM"
+    - "MU"
+    - "INTC"
+    - "ASML"
+    - "TSM"
+    - "ARM"
+    - "LRCX"
+    - "AMAT"
+
+    # Cyber & Cloud (High Beta)
+    - "PLTR"
+    - "CRM"
+    - "PANW"
+    - "CRWD"
+    - "UBER"
+    - "NET"
+    - "SNOW"
+    - "DDOG"
+    - "ZS"
+    - "OKTA"
+
+    # Finance & Payments
+    - "JPM"
+    - "BAC"
+    - "V"
+    - "MA"
+    - "GS"
+    - "COIN" # Crypto Exposure
+    - "MS"
+    - "BLK"
+    - "AXP"
+    - "SCHW"
+
+    # Retail & Industry
+    - "WMT"
+    - "COST"
+    - "HD"
+    - "CAT"
+    - "BA"
+    - "LOW"
+    - "DE"
+    - "UPS"
+    - "FDX"
+
+    # Energy
+    - "XOM"
+    - "CVX"
+    - "SLB"
+    - "COP"
+    - "EOG"
+
+    # Healthcare & Biotech
+    - "UNH"
+    - "JNJ"
+    - "LLY"
+    - "ABBV"
+    - "MRK"
+
+    # Communication & Media
+    - "NFLX"
+    - "DIS"
+    - "TMUS"
+    - "VZ"
+    - "T"
+
+    # Industrials / Defense
+    - "LMT"
+    - "RTX"
+    - "NOC"
+    - "GD"
+
+    # Materials & Infrastructure
+    - "LIN"
+    - "FCX"
+    - "NUE"
+
+  timeframe: "1Day"
+
+risk:
+  max_position_pct: 0.02 # 2% of account per trade
+  stop_loss_pct: 0.02 # 2%
+  take_profit_pct: 0.05 # 5%
+  max_drawdown_pct: 0.10 # 10%
+  stop_loss_atr_multiplier: 2.0
+  take_profit_atr_multiplier: 4.0
+
+execution:
+  paper_trading: true
+  use_telegram: true
+  log_level: "INFO"
+  timeout_seconds: 5
+  max_retries: 3
+
+strategy:
+  rsi_period: 14
+  rsi_buy_thresh: 60
+  rsi_sell_thresh: 75
+  sma_fast: 50
