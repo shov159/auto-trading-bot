@@ -187,6 +187,40 @@ class Backtester:
                         })
                         del self.positions[sym]
                         continue # Position closed, skip to next symbol
+                    
+                    # --- Trailing Stop Update (The Shield) ---
+                    # Logic: If price moves up, check if we can move SL up.
+                    # We use the CLOSE price of the day to update trailing stop for TOMORROW.
+                    # (In real-time it would happen intraday, but daily close is a good approximation for backtest)
+                    current_close = market_data[sym].loc[current_date]['close']
+                    
+                    # We need ATR. Ideally we'd calculate it daily, but for speed we might re-use the ATR from entry 
+                    # OR (better) we should really be re-calculating indicators daily.
+                    # For this lightweight backtest, let's assume we re-calculate ATR or use a rough estimate if not available.
+                    # To do it right, we need to call strategy to get indicators, or just calculate ATR here.
+                    # Let's simple use 2% estimate if ATR not handy, OR better: use the RiskManager's update method 
+                    # but we need the ATR value.
+                    
+                    # Let's try to get a fresh ATR from the strategy for this day
+                    # This is expensive but accurate. 
+                    # Alternative: Pass 'atr' stored in position? No, ATR changes.
+                    # Simplified Backtest approach: Use the ATR from ENTRY (fixed volatility assumption) 
+                    # or re-calc simple volatility.
+                    
+                    # Let's calculate a simple ATR-like range for the day
+                    tr = max(day_high - day_low, abs(day_high - current_close), abs(day_low - current_close))
+                    # Smooth it? Let's just use the current TR as a proxy or stick to the ATR at entry for simplicity
+                    # to match the mock/testing environment without full indicator re-calc overhead.
+                    # BETTER: The 'signal' at entry had ATR. Let's store that 'atr' in position and use it.
+                    # It's not perfect (ATR changes), but it's enough to test the MECHANISM of trailing stop.
+                    
+                    atr_value = pos.get('atr', 0)
+                    if atr_value > 0:
+                        new_sl = self.risk_manager.update_trailing_stop(current_close, pos['sl'], atr_value)
+                        if new_sl and new_sl > pos['sl']:
+                            print(f"[Trailing Stop] {current_date.date()} {sym}: Updated SL {pos['sl']:.2f} -> {new_sl:.2f}")
+                            self.positions[sym]['sl'] = new_sl
+                    # -----------------------------------------
 
             self.equity = self.current_cash + portfolio_value
             self.equity_curve.append({"date": current_date, "equity": self.equity})
@@ -212,7 +246,18 @@ class Backtester:
                 
                 # Mock Sentiment
                 # Generate varied sentiment instead of 0.0
-                sentiment = np.random.uniform(-1, 1) if mock_sentiment else 0.0
+                # IMPROVEMENT: Correlate mock sentiment with short-term trend to simulate "News follows Price"
+                # instead of pure random noise which causes false positive buys in downtrends.
+                if mock_sentiment:
+                    # Simple Trend Proxy: Price vs 20-day SMA
+                    sma_20 = hist_data['close'].tail(20).mean()
+                    curr_price = hist_data['close'].iloc[-1]
+                    # Add some noise but bias direction
+                    base_sent = 0.5 if curr_price > sma_20 else -0.5
+                    noise = np.random.uniform(-0.2, 0.2)
+                    sentiment = base_sent + noise
+                else:
+                    sentiment = 0.0
                 
                 # Generate Signal
                 signal = self.strategy.generate_signal(symbol, hist_data, sentiment, self.equity)
@@ -223,6 +268,13 @@ class Backtester:
                     print(f"Day {current_date.date()} Skipped {symbol}: {signal.get('reason')} | "
                           f"RSI={d.get('rsi', 0):.1f}, Sent={d.get('sentiment', 0):.1f}, "
                           f"Price={hist_data['close'].iloc[-1]:.1f}, SMA={d.get('sma', 0):.1f}")
+                
+                # Verify Rejection Log
+                if signal['action'] == 'HOLD' and 'Score' in signal.get('reason', ''):
+                     # Print strictly for validation
+                     # Limiting output to avoid spam, but enough to verify
+                     if days_counter % 20 == 0: 
+                        print(f"[Filter] {current_date.date()} {symbol}: {signal['reason']}")
 
                 if signal['action'] == 'BUY':
                     qty = signal['quantity']
@@ -236,7 +288,8 @@ class Backtester:
                             'quantity': qty,
                             'entry_price': price,
                             'sl': signal['stop_loss'],
-                            'tp': signal['take_profit']
+                            'tp': signal['take_profit'],
+                            'atr': signal['debug'].get('atr', 0) # Store ATR for Trailing Stop
                         }
                         self.trade_log.append({
                             "date": current_date,

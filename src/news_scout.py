@@ -2,6 +2,7 @@
 import feedparser
 import os
 import re
+import yfinance as yf
 from google import genai
 from dotenv import load_dotenv
 
@@ -16,17 +17,16 @@ class NewsScout:
         }
         api_key = os.getenv("GOOGLE_API_KEY")
         if api_key:
-            self.gemini_client = genai.Client(api_key=api_key)
+            try:
+                self.gemini_client = genai.Client(api_key=api_key)
+            except Exception as e:
+                print(f"Gemini Client Init Error: {e}")
+                self.gemini_client = None
         else:
             self.gemini_client = None
         
         # RSS Feed Categories
         self.feeds = {
-            "us_markets": [
-                "https://finance.yahoo.com/news/rssindex",
-                "https://www.cnbc.com/id/15839069/device/rss/rss.html",
-                "https://www.marketwatch.com/rss/topstories"
-            ],
             "crypto": [
                 "https://www.coindesk.com/arc/outboundfeeds/rss/"
             ],
@@ -39,12 +39,44 @@ class NewsScout:
     def fetch_category_headlines(self, category):
         """Fetch headlines for a specific category"""
         headlines = []
-        for url in self.feeds.get(category, []):
+        
+        # USE YFINANCE FOR US MARKETS (Real Headlines)
+        if category == "us_markets":
             try:
-                feed = feedparser.parse(url)
-                headlines.extend([entry.title for entry in feed.entries[:5]])
-            except:
-                continue
+                # Fetch SPY news as proxy for US Market
+                spy = yf.Ticker("SPY")
+                news_items = spy.news
+                if news_items:
+                    # Get top 5 headlines
+                    # Ensure safe key access
+                    headlines = []
+                    for item in news_items[:5]:
+                        # Debug structure if needed (for user request)
+                        # print(item) 
+                        title = item.get('title')
+                        if not title:
+                            # Try 'headline' or just skip
+                            title = item.get('headline')
+                        
+                        if title:
+                            headlines.append(title)
+                            
+                    if not headlines:
+                         headlines = ["No specific headlines found."]
+                         
+            except Exception as e:
+                print(f"YFinance News Error: {e}")
+                headlines = ["Error fetching US market news"]
+                
+        # USE RSS FOR OTHERS
+        else:
+            for url in self.feeds.get(category, []):
+                try:
+                    feed = feedparser.parse(url)
+                    headlines.extend([entry.title for entry in feed.entries[:5]])
+                except:
+                    continue
+                    
         return headlines[:10]  # Max 10 per category
     
     def analyze_category(self, category, headlines):

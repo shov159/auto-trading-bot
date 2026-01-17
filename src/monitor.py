@@ -23,21 +23,31 @@ class TradeMonitor:
         formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')
 
         # File Handler (Rotating)
-        file_handler = RotatingFileHandler("logs/trading_bot.log", maxBytes=5*1024*1024, backupCount=5)
+        file_handler = RotatingFileHandler("logs/trading_bot.log", maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
         # Console Handler
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
-        # Fix for Windows Unicode issues in Console
+        
+        # Force UTF-8 for Windows Console to support Emojis
         if os.name == 'nt':
             try:
                 import sys
+                import io
+                # Reconfigure stdout to utf-8 if possible, or wrap it
+                if hasattr(sys.stdout, 'reconfigure'):
+                    sys.stdout.reconfigure(encoding='utf-8')
+                else:
+                    # Fallback for older python or specific envs
+                    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+                
+                # Update handler stream just in case
                 console_handler.stream = sys.stdout
-                console_handler.stream.reconfigure(encoding='utf-8')
             except Exception:
                 pass
+                
         self.logger.addHandler(console_handler)
 
         # 2. Setup Telegram

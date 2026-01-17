@@ -4,16 +4,22 @@ import time
 from datetime import datetime
 import yaml
 import pandas as pd
+import yfinance as yf
 from dotenv import load_dotenv
+import io
+
+# Force UTF-8 stdout for Windows
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Alpaca
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
-from alpaca.data.enums import DataFeed
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus, QueryOrderStatus
+# from alpaca.data.historical import StockHistoricalDataClient
+# from alpaca.data.requests import StockBarsRequest
+# from alpaca.data.timeframe import TimeFrame
+# from alpaca.data.enums import DataFeed
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -61,31 +67,33 @@ class AITrader:
             sys.exit(1)
             
         self.trading_client = TradingClient(self.api_key, self.secret_key, paper=self.is_paper)
-        self.data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+        # self.data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
         
         # State
         self.symbols = self.config['trading']['symbols']
 
     def get_market_data(self, symbol: str) -> pd.DataFrame:
-        """Fetch last 60 days of data for indicators."""
+        """Fetch last 250 days of data for indicators using yfinance."""
         try:
-            now = datetime.now()
-            start = now - pd.Timedelta(days=100) # Buffer
+            # Using yfinance for better availability/free access as requested
+            # Fetch roughly 1 year to be safe for SMA200
+            end_date = datetime.now()
+            start_date = end_date - pd.Timedelta(days=400) 
             
-            req = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=TimeFrame.Day,
-                start=start,
-                end=now,
-                feed=DataFeed.IEX # Free tier friendly
-            )
-            bars = self.data_client.get_stock_bars(req)
+            df = yf.download(symbol, start=start_date, end=end_date, progress=False, multi_level_index=False)
             
-            if bars.df.empty:
+            if df.empty:
                 return pd.DataFrame()
             
-            df = bars.df.loc[symbol].copy()
+            # Normalize columns
             df.columns = [c.lower() for c in df.columns]
+            
+            # Ensure we have required columns
+            required = ['open', 'high', 'low', 'close', 'volume']
+            if not all(col in df.columns for col in required):
+                self.monitor.log_warning(f"Incomplete data for {symbol}")
+                return pd.DataFrame()
+                
             return df
             
         except Exception as e:
@@ -101,10 +109,46 @@ class AITrader:
             self.monitor.log_error(f"Failed to get account equity: {e}")
             return 0.0
 
+    def cancel_all_orders_for_symbol(self, symbol: str):
+        """Cancel all open orders for a specific symbol to free up shares."""
+        try:
+            orders = self.trading_client.get_orders(
+                GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN,
+                    symbols=[symbol]
+                )
+            )
+            for order in orders:
+                self.trading_client.cancel_order_by_id(order.id)
+                self.monitor.log_info(f"Cancelled open order for {symbol}: {order.id}")
+        except Exception as e:
+            self.monitor.log_error(f"Failed to cancel orders for {symbol}: {e}")
+
     def execute_order(self, action: str, symbol: str, qty: int, price: float, reason: str):
         """Place order via Alpaca."""
         if qty <= 0:
             return
+
+        # Cancel existing orders before selling to free up shares (Fix "Insufficient Qty" error)
+        if action == "SELL":
+            # 1. Cancel open orders
+            self.cancel_all_orders_for_symbol(symbol)
+            
+            # 2. Double Check Position Exists (Ghost Selling Fix)
+            try:
+                pos = self.trading_client.get_open_position(symbol)
+                available_qty = float(pos.qty)
+                if available_qty < qty:
+                    self.monitor.log_warning(f"⚠️ Adjusting SELL qty for {symbol}: {qty} -> {available_qty}")
+                    qty = int(available_qty)
+                
+                if qty <= 0:
+                    self.monitor.log_info(f"⚠️ Skipping SELL for {symbol}: No position found (Qty=0).")
+                    return
+            except Exception:
+                # If get_open_position fails (404), we don't hold it
+                self.monitor.log_info(f"⚠️ Skipping SELL for {symbol}: No position found.")
+                return
 
         side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
         
@@ -125,10 +169,52 @@ class AITrader:
         except Exception as e:
             self.monitor.notify_error(f"Order Execution Failed for {symbol}: {e}")
 
+    def is_market_open(self) -> bool:
+        """Check if US Market is open (09:30 - 16:00 ET, Mon-Fri)."""
+        # For MVP/testing, we often return True. But to stop weekend trading:
+        try:
+            from datetime import time
+            import pytz
+            
+            # Define ET timezone
+            tz_ny = pytz.timezone('America/New_York')
+            now_ny = datetime.now(tz_ny)
+            
+            # 1. Check Weekday (Mon=0, Sun=6)
+            if now_ny.weekday() >= 5: # Saturday or Sunday
+                return False
+                
+            # 2. Check Time (09:30 - 16:00)
+            market_start = time(9, 30)
+            market_end = time(16, 0)
+            current_time = now_ny.time()
+            
+            if current_time < market_start or current_time > market_end:
+                return False
+                
+            return True
+        except ImportError:
+            # Fallback if pytz not installed (though pandas usually has it)
+            # Just verify it's not weekend in local time as a crude check
+            if datetime.now().weekday() >= 5:
+                return False
+            return True 
+        except Exception as e:
+            self.monitor.log_error(f"Market hours check failed: {e}")
+            return True # Fail open to allow trading if uncertain, or False to be safe.
+            # Let's return True to not block if there's a weird error, but log it. 
+
     def run_cycle(self):
         """One iteration of the trading loop."""
-        self.monitor.log_info("Starting Trading Cycle...")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.monitor.log_info(f"[HEARTBEAT] {timestamp} - Starting Market Scan...")
         
+        if not self.is_market_open():
+            self.monitor.log_info("😴 Market Closed. Sleeping...")
+            # Sleep 5 minutes (300s) as requested
+            time.sleep(300)
+            return
+
         # ------------------------------
         
         # --- News Scout Integration ---
@@ -136,7 +222,7 @@ class AITrader:
             news_report = self.news_scout.get_market_brief()
             if news_report:
                 self.monitor.send_telegram_message(news_report)
-                self.monitor.log_info("📰 News update sent")
+                self.monitor.log_info("News update sent")
         except Exception as e:
             self.monitor.log_error(f"News error: {e}")
         # ------------------------------
@@ -184,6 +270,53 @@ class AITrader:
             signal = self.strategy.generate_signal(symbol, df, sentiment_score, equity)
             
             self.monitor.log_info(f"Analysis {symbol}: {signal['action']} | {signal.get('reason')}")
+
+            # --- Trailing Stop Logic (The Shield) ---
+            try:
+                # Check if we hold a position
+                position = None
+                try:
+                    position = self.trading_client.get_open_position(symbol)
+                except:
+                    pass # No position found
+
+                if position:
+                    # We have a position, check/update trailing stop
+                    current_price = float(position.current_price)
+                    atr = signal['debug'].get('atr', 0.0)
+                    
+                    if atr > 0:
+                        # Find existing Stop Loss Order
+                        # We search for open SELL STOP orders for this symbol.
+                        orders_req = GetOrdersRequest(
+                            status=QueryOrderStatus.OPEN,
+                            symbols=[symbol],
+                            side=OrderSide.SELL
+                        )
+                        open_orders = self.trading_client.get_orders(orders_req)
+                        
+                        sl_order = None
+                        for order in open_orders:
+                            if order.type in ['stop', 'stop_limit']:
+                                sl_order = order
+                                break
+                        
+                        if sl_order:
+                            current_sl = float(sl_order.stop_price)
+                            new_sl = self.rm.update_trailing_stop(current_price, current_sl, atr)
+                            
+                            if new_sl and new_sl > current_sl:
+                                self.monitor.log_info(f"Updating Trailing Stop for {symbol}: {current_sl} -> {new_sl:.2f}")
+                                self.trading_client.replace_order(
+                                    order_id=sl_order.id,
+                                    stop_price=new_sl
+                                )
+                        else:
+                             # No SL order found. In a real system, we might create one here.
+                             pass
+            except Exception as e:
+                 self.monitor.log_error(f"Trailing Stop Update Failed for {symbol}: {e}")
+            # ----------------------------------------
             
             # 5. Execute
             if signal['action'] == 'BUY':
@@ -213,7 +346,13 @@ class AITrader:
                         # Re-run sizing with multiplier
                         adjusted_qty = self.rm.calculate_position_size(equity, signal['price'], confidence_mult)
                         
-                        self.execute_order("BUY", symbol, adjusted_qty, signal['price'], signal['reason'])
+                        # Double check we don't already have a position (race condition)
+                        # Actually, we checked `current_qty == 0` above.
+                        # But let's log specifically.
+                        if adjusted_qty > 0:
+                            self.execute_order("BUY", symbol, adjusted_qty, signal['price'], signal['reason'])
+                        else:
+                            self.monitor.log_info(f"Skipping BUY {symbol}: Calc Qty is 0 (Risk Mgmt)")
                     else:
                         self.monitor.log_info(f"Skipping BUY {symbol}: Already hold {current_qty}")
                         
@@ -238,11 +377,14 @@ class AITrader:
     def run(self):
         """Run the bot loop."""
         self.monitor.notify_startup()
-        
+        self.monitor.log_info("Bot started in Live Mode (Paper Trading)")
+        self.monitor.log_info(f"Strategy: Score Threshold > {self.strategy.buy_threshold}, TP: {self.rm.tp_atr_mult}x ATR")
+
         while True:
             try:
                 self.run_cycle()
                 self.monitor.log_info("Cycle complete. Sleeping for 15 minutes...")
+                # Sleep 15 minutes
                 time.sleep(900) 
             except KeyboardInterrupt:
                 self.monitor.log_info("Bot stopped by user.")

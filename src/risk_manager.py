@@ -102,6 +102,35 @@ class RiskManager:
         else:
             raise ValueError(f"Invalid side: {side}. Must be 'buy' or 'sell'.")
 
+    def update_trailing_stop(self, current_price: float, current_stop_loss: float, atr_value: float) -> Union[float, None]:
+        """
+        Calculate new trailing stop loss if price has moved favorably.
+        
+        Logic:
+        - If current_price moves up, potential new SL = current_price - (2 * ATR).
+        - Only update if new SL > current SL (never move down).
+        
+        Args:
+            current_price: Current market price.
+            current_stop_loss: The current active stop loss price.
+            atr_value: Current ATR value.
+            
+        Returns:
+            New stop loss price if update needed, else None.
+        """
+        if atr_value <= 0 or current_price <= 0:
+            return None
+            
+        # Calculate potential new stop loss
+        new_sl = current_price - (atr_value * self.sl_atr_mult)
+        
+        # Check if new SL is higher than current SL (assuming Long position)
+        # Note: This logic assumes LONG positions only for now as per "The Shield" specs.
+        if new_sl > current_stop_loss:
+            return new_sl
+            
+        return None
+
     def check_drawdown(self, current_equity: float, peak_equity: float) -> bool:
         """
         Check if the portfolio has exceeded the maximum drawdown.
