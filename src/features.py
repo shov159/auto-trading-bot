@@ -13,9 +13,16 @@ class FeatureEngineer:
         self.regime_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
         self.is_fitted = False
         # Define feature columns explicitly to ensure order matching
+        # Must match the order of creation in preprocess + allow for intermediates if env used them
         self.feature_cols = [
-            'log_ret', 'atr_pct', 'rsi_norm', 'macd_norm', 'macd_hist_norm',
-            'bb_pct_b', 'bb_width', 'vol_chg', 'dist_sma50', 'dist_sma200', 'adx'
+            'log_ret', 
+            'atr', 'atr_pct', 
+            'rsi', 'rsi_norm', 
+            'macd_norm', 'macd_hist_norm',
+            'bb_pct_b', 'bb_width', 
+            'vol_chg', 
+            'dist_sma50', 'dist_sma200', 
+            'adx'
         ]
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
