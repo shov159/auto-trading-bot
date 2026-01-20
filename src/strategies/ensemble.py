@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 from stable_baselines3 import PPO, A2C, DDPG
 from sklearn.ensemble import RandomForestClassifier
 from typing import Dict, Any, List
@@ -21,11 +22,18 @@ class EnsembleStrategy:
         # Load Agents (Placeholders - assuming they exist or will be trained)
         # We wrap in try-except to allow initialization before training
         try:
-            self.agent_ppo = PPO.load(f"{models_dir}/ppo_model")
-            self.agent_a2c = A2C.load(f"{models_dir}/a2c_model")
-            self.agent_ddpg = DDPG.load(f"{models_dir}/ddpg_model")
+            # Check for specific model names (btc_ppo or ppo_model)
+            # We try standard names first, then look for whatever is there
+            if os.path.exists(f"{models_dir}/btc_ppo.zip"):
+                self.agent_ppo = PPO.load(f"{models_dir}/btc_ppo")
+                self.agent_a2c = A2C.load(f"{models_dir}/btc_a2c")
+                self.agent_ddpg = DDPG.load(f"{models_dir}/btc_ddpg")
+            else:
+                self.agent_ppo = PPO.load(f"{models_dir}/ppo_model")
+                self.agent_a2c = A2C.load(f"{models_dir}/a2c_model")
+                self.agent_ddpg = DDPG.load(f"{models_dir}/ddpg_model")
         except Exception as e:
-            print(f"Warning: Could not load models: {e}. Ensemble will return neutral.")
+            print(f"Warning: Could not load models from {models_dir}: {e}. Ensemble will return neutral.")
             self.agent_ppo = None
             self.agent_a2c = None
             self.agent_ddpg = None

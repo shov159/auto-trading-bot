@@ -1,0 +1,29 @@
+# Crypto Trading Configuration (BTC/USD) - SANDBOX MODE
+
+trading:
+  symbols:
+    - "BTC/USD"
+
+  timeframe: "5Min" # Faster timeframe for testing
+
+risk:
+  max_position_pct: 0.05 # 5% size (Crypto Volatility)
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.10
+  max_drawdown_pct: 0.20
+  stop_loss_atr_multiplier: 3.0 # Wider stops
+  take_profit_atr_multiplier: 4.0
+
+execution:
+  paper_trading: true
+  use_telegram: true
+  log_level: "INFO"
+  timeout_seconds: 10
+  max_retries: 3
+
+strategy:
+  rsi_period: 14
+  rsi_buy_thresh: 60
+  rsi_sell_thresh: 75
+  sma_fast: 20
+  buy_score_threshold: 50

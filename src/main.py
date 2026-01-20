@@ -28,8 +28,9 @@ from src.monitor import TradeMonitor
 from src.news_scout import NewsScout
 
 def load_config():
-    """Load configuration from config.yaml."""
-    with open("config.yaml", "r", encoding="utf-8") as f:
+    """Load configuration from config.yaml or env var."""
+    config_path = os.getenv("TRADING_BOT_CONFIG", "config.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 class AITrader:
@@ -56,7 +57,10 @@ class AITrader:
         
         # Load AI Components
         self.feature_engineer = FeatureEngineer()
-        self.ensemble = EnsembleStrategy(models_dir="models")
+        
+        # Determine Models Directory
+        models_dir = os.getenv("TRADING_BOT_MODELS", "models")
+        self.ensemble = EnsembleStrategy(models_dir=models_dir)
         
         # Alpaca Connection
         self.api_key = os.getenv("ALPACA_API_KEY")
@@ -78,12 +82,41 @@ class AITrader:
             self.monitor.log_warning("Initial Balance is 0. Please check Alpaca account.")
 
     def get_market_data(self, symbol: str) -> pd.DataFrame:
-        """Fetch last 300 days of data for features."""
+        """Fetch data for features (Stock or Crypto)."""
         try:
             end_date = datetime.now()
             start_date = end_date - pd.Timedelta(days=400) 
             
-            df = yf.download(symbol, start=start_date, end=end_date, progress=False, multi_level_index=False)
+            # Check if Crypto (symbol has / or config says so)
+            if "/" in symbol or "BTC" in symbol:
+                from alpaca.data.historical import CryptoHistoricalDataClient
+                from alpaca.data.requests import CryptoBarsRequest
+                from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+                
+                client = CryptoHistoricalDataClient(self.api_key, self.secret_key)
+                
+                # Determine Timeframe from Config
+                tf_str = self.config['trading'].get('timeframe', '1Day')
+                if tf_str == "5Min":
+                    tf = TimeFrame(5, TimeFrameUnit.Minute)
+                elif tf_str == "1Min":
+                    tf = TimeFrame(1, TimeFrameUnit.Minute)
+                elif tf_str == "1Hour":
+                    tf = TimeFrame.Hour
+                else:
+                    tf = TimeFrame.Day
+                
+                req = CryptoBarsRequest(
+                    symbol_or_symbols=[symbol],
+                    timeframe=tf, # Dynamic Timeframe
+                    start=start_date,
+                    end=end_date
+                )
+                bars = client.get_crypto_bars(req)
+                df = bars.df.xs(symbol)
+            else:
+                # Stock (YFinance)
+                df = yf.download(symbol, start=start_date, end=end_date, progress=False, multi_level_index=False)
             
             if df.empty:
                 return pd.DataFrame()
@@ -155,7 +188,12 @@ class AITrader:
             self.monitor.notify_error(f"Order Execution Failed for {symbol}: {e}")
 
     def is_market_open(self) -> bool:
-        """Check if US Market is open (09:30 - 16:00 ET, Mon-Fri)."""
+        """Check if Market is open. 24/7 for Crypto, 09:30-16:00 ET for Stocks."""
+        # 1. Check if we are trading Crypto
+        is_crypto = any("/" in s or "BTC" in s for s in self.symbols)
+        if is_crypto:
+            return True # Crypto never sleeps
+            
         try:
             from datetime import time as dt_time
             import pytz

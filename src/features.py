@@ -1,12 +1,14 @@
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from ta.volatility import AverageTrueRange, BollingerBands
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, SMAIndicator, ADXIndicator
 
 class FeatureEngineer:
     """
     Generates stationary, machine-learning-friendly features from financial time series.
-    Uses pandas-ta for indicator calculation.
+    Uses 'ta' library for indicator calculation.
     """
 
     def __init__(self):
@@ -22,7 +24,8 @@ class FeatureEngineer:
             'bb_pct_b', 'bb_width', 
             'vol_chg', 
             'dist_sma50', 'dist_sma200', 
-            'adx'
+            'adx',
+            'sentiment', 'regime_prob'
         ]
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -36,41 +39,55 @@ class FeatureEngineer:
         df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
         
         # 2. Volatility (Stationary)
-        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+        atr_ind = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
+        df['atr'] = atr_ind.average_true_range()
         df['atr_pct'] = df['atr'] / df['close']
         
         # 3. Relative Strength (Stationary-ish, bounded 0-100)
-        df['rsi'] = ta.rsi(df['close'], length=14)
+        rsi_ind = RSIIndicator(close=df['close'], window=14)
+        df['rsi'] = rsi_ind.rsi()
         df['rsi_norm'] = (df['rsi'] - 50) / 100.0
         
         # 4. MACD (Stationary transformation)
-        macd = ta.macd(df['close'])
-        df['macd_norm'] = macd['MACD_12_26_9'] / df['close']
-        df['macd_hist_norm'] = macd['MACDh_12_26_9'] / df['close']
+        macd_ind = MACD(close=df['close'])
+        df['macd_norm'] = macd_ind.macd() / df['close']
+        df['macd_hist_norm'] = macd_ind.macd_diff() / df['close']
         
         # 5. Bollinger Bands (Stationary interaction)
-        bb = ta.bbands(df['close'], length=20, std=2)
-        df['bb_pct_b'] = bb['BBP_20_2.0']
-        df['bb_width'] = bb['BBB_20_2.0']
+        bb_ind = BollingerBands(close=df['close'], window=20, window_dev=2)
+        df['bb_pct_b'] = bb_ind.bollinger_pband()
+        df['bb_width'] = bb_ind.bollinger_wband()
         
         # 6. Volume Oscillator (Stationary)
         df['vol_chg'] = np.log(df['volume'] / df['volume'].shift(1))
         df['vol_chg'] = df['vol_chg'].replace([np.inf, -np.inf], 0)
         
         # 7. Distance from Moving Averages (Stationary)
-        sma_50 = ta.sma(df['close'], length=50)
-        sma_200 = ta.sma(df['close'], length=200)
+        sma_50 = SMAIndicator(close=df['close'], window=50).sma_indicator()
+        sma_200 = SMAIndicator(close=df['close'], window=200).sma_indicator()
         df['dist_sma50'] = (df['close'] - sma_50) / sma_50
         df['dist_sma200'] = (df['close'] - sma_200) / sma_200
         
         # 8. ADX
-        adx = ta.adx(df['high'], df['low'], df['close'])
-        df['adx'] = adx['ADX_14'] / 100.0
+        adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+        df['adx'] = adx_ind.adx() / 100.0
+        
+        # 9. Sentiment & Regime (Placeholders for missing live data)
+        # These features are expected by the trained model (Total 19 dims = 15 features + 4 state)
+        df['sentiment'] = 0.0
+        df['regime_prob'] = 0.0
         
         # Clean NaN values
         df.dropna(inplace=True)
         
-        return df
+        # Filter DF to only include intended features + raw data needed for Env
+        # This ensures Training Env gets the exact same features as Inference
+        keep_cols = ['open', 'high', 'low', 'close', 'volume'] + self.feature_cols
+        # Handle date/index if needed, usually index is preserved.
+        
+        # Filter existing columns
+        existing_cols = [c for c in keep_cols if c in df.columns]
+        return df[existing_cols]
 
     def get_latest_features(self, processed_df: pd.DataFrame) -> np.ndarray:
         """Extract the latest feature vector for inference."""
@@ -82,7 +99,7 @@ class FeatureEngineer:
                           max_net_worth: float) -> np.ndarray:
         """
         Construct the RL observation vector matching the training environment.
-        Shape: [Features (11) + Account State (4)] = 15 dims
+        Shape: [Features (15) + Account State (4)] = 19 dims
         """
         state = np.array([
             balance / initial_balance,
