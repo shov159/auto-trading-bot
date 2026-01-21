@@ -10,7 +10,7 @@ class TradeMonitor:
     Handles logging and user notifications via Telegram.
     """
 
-    def __init__(self):
+    def __init__(self, log_file: str = "trading_bot.log"):
         # 1. Setup Logging
         self.logger = logging.getLogger("AITrader")
         self.logger.setLevel(logging.INFO)
@@ -23,7 +23,7 @@ class TradeMonitor:
         formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')
 
         # File Handler (Rotating)
-        file_handler = RotatingFileHandler("logs/trading_bot.log", maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')
+        file_handler = RotatingFileHandler(f"logs/{log_file}", maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 

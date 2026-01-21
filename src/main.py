@@ -37,10 +37,10 @@ class AITrader:
     """
     Main orchestrator for the AI Trading Bot (RL Ensemble Edition).
     """
-    def __init__(self):
+    def __init__(self, log_file: str = "trading_bot.log"):
         load_dotenv()
         self.config = load_config()
-        self.monitor = TradeMonitor()
+        self.monitor = TradeMonitor(log_file=log_file)
         
         try:
             from src.news_scout import NewsScout
@@ -188,29 +188,36 @@ class AITrader:
             self.monitor.notify_error(f"Order Execution Failed for {symbol}: {e}")
 
     def is_market_open(self) -> bool:
-        """Check if Market is open. 24/7 for Crypto, 09:30-16:00 ET for Stocks."""
+        """Check if Market is open using Alpaca API Clock."""
         # 1. Check if we are trading Crypto
         is_crypto = any("/" in s or "BTC" in s for s in self.symbols)
         if is_crypto:
             return True # Crypto never sleeps
             
         try:
-            from datetime import time as dt_time
-            import pytz
-            tz_ny = pytz.timezone('America/New_York')
-            now_ny = datetime.now(tz_ny)
-            
-            if now_ny.weekday() >= 5: return False
-            
-            market_start = dt_time(9, 30)
-            market_end = dt_time(16, 0)
-            current_time = now_ny.time()
-            
-            if current_time < market_start or current_time > market_end:
-                return False
-            return True
-        except:
-            return True # Fallback
+            # Use Alpaca Clock for accurate market status (handles holidays/early closes)
+            clock = self.trading_client.get_clock()
+            return clock.is_open
+        except Exception as e:
+            self.monitor.log_error(f"Failed to check market status: {e}")
+            # Fallback to local logic if API fails
+            try:
+                from datetime import time as dt_time
+                import pytz
+                tz_ny = pytz.timezone('America/New_York')
+                now_ny = datetime.now(tz_ny)
+                
+                if now_ny.weekday() >= 5: return False
+                
+                market_start = dt_time(9, 30)
+                market_end = dt_time(16, 0)
+                current_time = now_ny.time()
+                
+                if current_time < market_start or current_time > market_end:
+                    return False
+                return True
+            except:
+                return True # Optimistic fallback
 
     def run_cycle(self):
         """One iteration of the trading loop using RL Ensemble."""
@@ -353,5 +360,13 @@ class AITrader:
                 time.sleep(60)
 
 if __name__ == "__main__":
-    bot = AITrader()
+    # Determine log file based on config or env var
+    config_env = os.getenv("TRADING_BOT_CONFIG", "config.yaml")
+    
+    if "crypto" in config_env:
+        log_file = "crypto_bot.log"
+    else:
+        log_file = "spy_bot.log"
+        
+    bot = AITrader(log_file=log_file)
     bot.run()
