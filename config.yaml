@@ -21,9 +21,43 @@ execution:
   timeout_seconds: 5
   max_retries: 3
 
+# Debug & Testing Settings
+debug:
+  debug_mode: false  # Set to true for verbose logging & stack traces
+  risk_per_trade: 50  # Default risk per trade in $
+  test_mode_enabled: true  # Allow /test_signal command
+
 strategy:
   rsi_period: 14
   rsi_buy_thresh: 60
   rsi_sell_thresh: 75
   sma_fast: 50
   buy_score_threshold: 60 # Optimized from 70
+
+# CIO AI Brain Configuration
+cio_brain:
+  # Watchlist for autonomous scanning
+  watchlist:
+    - "SPY"
+    - "QQQ"
+    - "NVDA"
+    - "TSLA"
+    - "AMD"
+    - "AAPL"
+    - "MSFT"
+    - "AMZN"
+    - "META"
+    - "GOOGL"
+  
+  # Autonomous scan settings
+  scan_interval_minutes: 30
+  scan_during_market_hours_only: true
+  
+  # Alert thresholds
+  min_conviction_for_alert: "HIGH"  # HIGH, MED, or LOW
+  
+  # AI Model preferences (uses first available)
+  preferred_models:
+    - "gpt-4o"           # OpenAI
+    - "claude-sonnet-4-20250514"  # Anthropic
+    - "gemini-2.0-flash"           # Google

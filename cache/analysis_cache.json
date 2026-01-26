@@ -1,0 +1,216 @@
+{
+  "entries": {
+    "SPY": {
+      "ticker": "SPY",
+      "price_at_analysis": 693.87,
+      "analysis_result": {
+        "bluf": "PASS on SPY due to insufficient volume and no short squeeze setup.",
+        "logic_engine": "Squeeze",
+        "action": "PASS",
+        "ticker": "SPY",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Volume is too low relative to average. No short squeeze metrics available. No significant news catalysts. Price near 52 week high, but RSI not high enough to indicate a blow-off top."
+      },
+      "timestamp": "2026-01-26T21:10:44.610827",
+      "hit_count": 0
+    },
+    "QQQ": {
+      "ticker": "QQQ",
+      "price_at_analysis": 627.08,
+      "analysis_result": {
+        "bluf": "PASS due to low relative volume and lack of a clear catalyst, QQQ trading near resistance.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "QQQ",
+        "plan": {
+          "buy_zone": null,
+          "targets": [],
+          "invalidation": null
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "QQQ is approaching resistance at $630.0 with relatively low volume (0.45x). Without a strong catalyst or significant volume, the risk-reward is not favorable. The RSI of 57.72 does not indicate an overbought condition that would suggest a short opportunity. Therefore, passing on this setup."
+      },
+      "timestamp": "2026-01-26T21:10:58.082138",
+      "hit_count": 0
+    },
+    "NVDA": {
+      "ticker": "NVDA",
+      "price_at_analysis": 186.85,
+      "analysis_result": {
+        "bluf": "Neutral setup on NVDA; approaching support, but needs more volume and catalyst for aggressive action.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "NVDA",
+        "plan": {
+          "buy_zone": null,
+          "targets": [],
+          "invalidation": null
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Volume is below average, no clear squeeze setup (SI too low), and no immediate news catalyst. RSI is neutral. Needs a significant catalyst or volume surge to justify a buy. R/R is not favorable at current levels."
+      },
+      "timestamp": "2026-01-26T21:11:01.511198",
+      "hit_count": 0
+    },
+    "TSLA": {
+      "ticker": "TSLA",
+      "price_at_analysis": 437.99,
+      "analysis_result": {
+        "bluf": "PASS on TSLA due to low volume relative and weak squeeze metrics.",
+        "logic_engine": "Squeeze",
+        "action": "PASS",
+        "ticker": "TSLA",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Volume Relative is only 0.42x. Short Interest is negligible at 0.02%. No squeeze setup detected."
+      },
+      "timestamp": "2026-01-26T21:11:13.295102",
+      "hit_count": 0
+    },
+    "AMD": {
+      "ticker": "AMD",
+      "price_at_analysis": 253.05,
+      "analysis_result": {
+        "bluf": "PASS on AMD due to low volume relative and RSI approaching overbought territory, indicating a potential pullback.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "AMD",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "AMD's volume relative is below 1, and with RSI near 70, a pullback is likely. The short interest is also negligible, ruling out a squeeze. Therefore, the risk/reward isn't favorable at this time."
+      },
+      "timestamp": "2026-01-26T21:11:16.118133",
+      "hit_count": 0
+    },
+    "AAPL": {
+      "ticker": "AAPL",
+      "price_at_analysis": 255.39,
+      "analysis_result": {
+        "bluf": "AAPL showing oversold bounce potential but lacking strong catalysts for high conviction.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "AAPL",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "RSI is low, suggesting potential bounce, but volume is weak and short interest negligible. Nearest resistance is too far for a 1:3 R/R. No clear catalyst despite recent price movement."
+      },
+      "timestamp": "2026-01-26T21:11:20.528749",
+      "hit_count": 0
+    },
+    "MSFT": {
+      "ticker": "MSFT",
+      "price_at_analysis": 472.455,
+      "analysis_result": {
+        "bluf": "MSFT is a HOLD. Approaching resistance with weak volume; monitor for breakout or pullback.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "MSFT",
+        "plan": {
+          "buy_zone": "460-465",
+          "targets": [
+            "489.7",
+            "500"
+          ],
+          "invalidation": "438.68"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Volume is weak relative to average. RSI is neutral. Approaching resistance at $489.7. Need a catalyst or strong breakout for a buy signal. A better entry point would be on a pullback to the 20 SMA."
+      },
+      "timestamp": "2026-01-26T21:11:26.392579",
+      "hit_count": 0
+    },
+    "AMZN": {
+      "ticker": "AMZN",
+      "price_at_analysis": 239.235,
+      "analysis_result": {
+        "bluf": "PASS on AMZN due to low relative volume and lack of short squeeze potential.",
+        "logic_engine": "Squeeze",
+        "action": "PASS",
+        "ticker": "AMZN",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "AMZN's short interest is negligible, and the volume relative is very low (0.39x), indicating a lack of momentum. No short squeeze setup. News catalysts are absent."
+      },
+      "timestamp": "2026-01-26T21:11:30.787901",
+      "hit_count": 0
+    },
+    "META": {
+      "ticker": "META",
+      "price_at_analysis": 673.925,
+      "analysis_result": {
+        "bluf": "META showing strength, but insufficient squeeze metrics and moderate volume suggest a neutral stance.",
+        "logic_engine": "Squeeze",
+        "action": "PASS",
+        "ticker": "META",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [
+            "N/A",
+            "N/A"
+          ],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Low Short Interest and low Volume Relative (0.52x) do not align with squeeze criteria. Lacks compelling news catalysts. R/R below 1:3."
+      },
+      "timestamp": "2026-01-26T21:11:36.757680",
+      "hit_count": 0
+    },
+    "GOOGL": {
+      "ticker": "GOOGL",
+      "price_at_analysis": 334.98,
+      "analysis_result": {
+        "bluf": "Passing on GOOGL due to low relative volume and uncompelling risk/reward.",
+        "logic_engine": "Macro",
+        "action": "PASS",
+        "ticker": "GOOGL",
+        "plan": {
+          "buy_zone": "N/A",
+          "targets": [],
+          "invalidation": "N/A"
+        },
+        "conviction": "LOW",
+        "is_push_alert": false,
+        "reasoning": "Volume is weak (0.42x relative), short interest negligible, and R/R does not meet the 1:3 minimum. Although the price is trending upwards, the momentum is not strong enough to justify a position. No news catalysts to drive further upside. Nearest resistance at 52W High ($340.49) doesn't offer sufficient profit potential given a stop below $310.33."
+      },
+      "timestamp": "2026-01-26T21:11:41.844335",
+      "hit_count": 0
+    }
+  },
+  "stats": {
+    "hits": 0,
+    "misses": 10,
+    "invalidations": 0
+  },
+  "saved_at": "2026-01-26T21:11:41.845330"
+}
