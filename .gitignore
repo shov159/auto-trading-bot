@@ -36,3 +36,5 @@ build/
 *.log
 agent-tools/
 
+
+data/

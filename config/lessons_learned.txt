@@ -1,0 +1,2 @@
+
+- Avoid taking trades with less than 1.5 relative volume unless there is major news.
