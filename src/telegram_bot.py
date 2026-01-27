@@ -503,6 +503,14 @@ class TelegramCIOBot:
             except Exception as e:
                 log_error(f"Failed to log trade to Learning Engine: {e}")
 
+            log_telegram("Success message sent")
+
+            # LOG TRADE TO LEARNING ENGINE
+            try:
+                get_learning_engine().log_trade_entry(trade_data, result['order_id'])
+            except Exception as e:
+                log_error(f"Failed to log trade to Learning Engine: {e}")
+
             # Remove from pending
             del self.pending_trades[trade_id]
 
@@ -789,6 +797,35 @@ Please check Alpaca dashboard.
 🛡️ **Rate Limit:** 5s min interval + jitter
 """
         self.send_message(msg)
+
+
+    def _cmd_learn(self):
+        """Trigger the Post-Mortem Analysis manually."""
+        self.send_message("🧠 **Post-Mortem Engine**\n\nStarting analysis of recent closed trades...")
+
+        try:
+            engine = get_learning_engine()
+
+            # 1. Update outcomes
+            self.send_message("🔄 Syncing trade outcomes with Alpaca...")
+            count = engine.update_trade_outcomes(self.alpaca_client)
+
+            # 2. Analyze
+            if count >= 0:
+                self.send_message(f"found {count} updated trades. Running critique agent...")
+                lessons = engine.analyze_past_performance()
+
+                if lessons:
+                    lesson_text = "\n".join(lessons)
+                    self.send_message(f"🎓 **New Lessons Learned:**\n\n{lesson_text}")
+                else:
+                    self.send_message("✅ No new lessons generated (no fresh closed trades or nothing to learn).")
+            else:
+                 self.send_message("⚠️ Failed to sync outcomes.")
+
+        except Exception as e:
+            logger.error(f"Learn command failed: {e}")
+            self.send_message(f"❌ Error during learning: {e}")
 
 
     def _cmd_learn(self):
@@ -1505,6 +1542,9 @@ _More aggressive, more trades._
 `/autotrade [on|off]` - ביצוע אוטומטי
 `/autotrade high` - רק HIGH conviction
 `/autotrade med` - MED+ conviction
+
+🧠 **Self-Learning:**
+`/learn` - הפעל ניתוח ביצועים ולמידה
 
 📊 **Logic Engines:**
 • Sympathy - מסחר סימפטיה
