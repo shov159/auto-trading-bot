@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import tempfile
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from src.logger import log_info, log_error, log_ok, log_warn, log_ai
@@ -20,213 +22,323 @@ class LearningEngine:
             except FileExistsError:
                 pass
         
+        # Initialize empty history if not exists
         if not os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "w") as f:
-                json.dump([], f)
+            self._atomic_write([])
+
+    def _atomic_write(self, data: List[Dict]):
+        """Write data to history file atomically to prevent corruption."""
+        try:
+            # Create temp file
+            fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(HISTORY_FILE), text=True)
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            # Atomic rename
+            shutil.move(temp_path, HISTORY_FILE)
+        except Exception as e:
+            log_error(f"Atomic write failed: {e}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def _load_history(self) -> List[Dict]:
+        """Safely load trade history."""
+        if not os.path.exists(HISTORY_FILE):
+            return []
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            log_error("Corrupt history file, starting fresh backup")
+            # Backup corrupt file if it exists and is not empty
+            if os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0:
+                shutil.copy(HISTORY_FILE, f"{HISTORY_FILE}.bak")
+            return []
 
     def log_trade_entry(self, trade_data: Dict[str, Any], order_id: str):
-        """Log a new trade entry to history."""
+        """
+        Log a new trade entry with comprehensive context snapshot.
+        """
         try:
-            # Ensure file exists
-            if not os.path.exists(HISTORY_FILE):
-                 with open(HISTORY_FILE, "w") as f: json.dump([], f)
-
-            with open(HISTORY_FILE, "r") as f:
-                try:
-                    history = json.load(f)
-                except json.JSONDecodeError:
-                    history = []
+            history = self._load_history()
             
-            # Enrich with initial status
+            # Create standardized trade record
             entry_record = {
-                "order_id": order_id,
+                "order_id": str(order_id),
                 "ticker": trade_data.get("ticker"),
                 "action": trade_data.get("action"),
+                "qty": trade_data.get("qty", 0),
                 "entry_time": datetime.now().isoformat(),
                 "status": "OPEN",
+                
+                # Plan details
                 "planned_entry": trade_data.get("entry"),
                 "planned_stop": trade_data.get("stop_loss"),
                 "planned_target": trade_data.get("take_profit"),
+                "risk_amount": trade_data.get("risk", 0),
+                
+                # Context Snapshot
                 "reasoning": trade_data.get("analysis", {}).get("reasoning", ""),
                 "market_context": trade_data.get("analysis", {}).get("raw_data", {}),
-                "outcome": None,
+                "analysis_full": trade_data.get("analysis", {}),
+                
+                # Outcomes (to be filled later)
+                "close_time": None,
+                "filled_entry_price": None,
+                "filled_exit_price": None,
+                "pnl_usd": None,
+                "pnl_pct": None,
+                "exit_reason": None, # TP, SL, MANUAL
+                
+                # Learning
                 "critique": None,
                 "lesson": None
             }
             
             history.append(entry_record)
-            
-            with open(HISTORY_FILE, "w") as f:
-                json.dump(history, f, indent=2)
-                
-            log_info(f"Logged trade entry for {entry_record['ticker']} (Order: {order_id})")
+            self._atomic_write(history)
+            log_info(f"Logged trade entry: {entry_record['ticker']} (ID: {order_id})")
             
         except Exception as e:
             log_error(f"Failed to log trade entry: {e}")
 
     def update_trade_outcomes(self, alpaca_client):
-        """Sync closed trades with Alpaca history."""
+        """
+        Sync open trades with Alpaca to detect closures and calculate PnL.
+        Handles bracket orders by checking child orders (legs).
+        """
         if not alpaca_client:
+            log_warn("No Alpaca client provided for outcome sync")
             return
             
         try:
-            with open(HISTORY_FILE, "r") as f:
-                history = json.load(f)
-            
+            history = self._load_history()
             updated = False
             
-            # Get closed orders from Alpaca (last 50)
-            # Note: This is a simplified check. A full check would verify filled status.
+            # Get all closed orders recently (limit 50)
+            # We fetch closed orders to find exits
             try:
-                closed_orders = alpaca_client.get_orders(status="closed", limit=50)
+                closed_orders = alpaca_client.get_orders(status="closed", limit=100, nested=True)
+                # Map order ID to order object for easy lookup
                 orders_map = {str(o.id): o for o in closed_orders}
             except Exception as e:
-                log_warn(f"Could not fetch Alpaca orders: {e}")
+                log_warn(f"Alpaca sync failed: {e}")
                 return
 
             for trade in history:
                 if trade["status"] == "OPEN":
-                    order_id = str(trade.get("order_id"))
-                    if order_id in orders_map:
-                        alpaca_order = orders_map[order_id]
+                    parent_id = str(trade.get("order_id"))
+                    
+                    # 1. Check if parent order is closed/filled
+                    if parent_id in orders_map:
+                        parent_order = orders_map[parent_id]
                         
-                        trade["status"] = "CLOSED"
-                        trade["close_time"] = str(alpaca_order.filled_at) if alpaca_order.filled_at else datetime.now().isoformat()
+                        # Update fill info if not set
+                        if parent_order.status == 'filled' and not trade.get("filled_entry_price"):
+                            trade["filled_entry_price"] = float(parent_order.filled_avg_price) if parent_order.filled_avg_price else 0
                         
-                        # Store fill price as approx outcome for now
-                        fill_price = float(alpaca_order.filled_avg_price) if alpaca_order.filled_avg_price else 0
-                        trade["filled_entry_price"] = fill_price
+                        # 2. Check legs (TP/SL) if available
+                        # Alpaca 'nested=True' returns legs in the order object usually, 
+                        # but we might need to search the closed_orders list for orders with this parent_id
                         
-                        updated = True
-                        log_ok(f"Marked trade {trade['ticker']} as CLOSED")
+                        exit_order = None
+                        exit_reason = "UNKNOWN"
+                        
+                        # Search for child orders in closed_orders
+                        for o in closed_orders:
+                            if str(o.parent_id) == parent_id and o.status == 'filled':
+                                exit_order = o
+                                # Determine if SL or TP based on price relative to entry
+                                # Simplified logic: usually we can check order type (STOP/LIMIT)
+                                if o.order_type == 'stop' or o.order_type == 'stop_limit':
+                                    exit_reason = "STOP_LOSS"
+                                elif o.order_type == 'limit':
+                                    exit_reason = "TAKE_PROFIT"
+                                break
+                        
+                        # If we found an exit
+                        if exit_order:
+                            trade["status"] = "CLOSED"
+                            trade["close_time"] = str(exit_order.filled_at)
+                            trade["filled_exit_price"] = float(exit_order.filled_avg_price)
+                            trade["exit_reason"] = exit_reason
+                            
+                            # Calculate PnL
+                            if trade["filled_entry_price"] and trade["filled_exit_price"]:
+                                entry = trade["filled_entry_price"]
+                                exit_px = trade["filled_exit_price"]
+                                qty = float(trade["qty"])
+                                
+                                if trade["action"] == "BUY":
+                                    pnl = (exit_px - entry) * qty
+                                    pnl_pct = (exit_px - entry) / entry
+                                else: # SELL/SHORT
+                                    pnl = (entry - exit_px) * qty
+                                    pnl_pct = (entry - exit_px) / entry
+                                
+                                trade["pnl_usd"] = round(pnl, 2)
+                                trade["pnl_pct"] = round(pnl_pct * 100, 2)
+                                
+                                log_ok(f"Trade CLOSED: {trade['ticker']} | PnL: ${pnl:.2f} ({pnl_pct:.1%}) | {exit_reason}")
+                            
+                            updated = True
+                        
+                        # Handle manual close or expiration (parent closed but no legs filled yet?)
+                        elif parent_order.status in ['canceled', 'expired', 'rejected']:
+                             trade["status"] = "CANCELED"
+                             updated = True
             
             if updated:
-                with open(HISTORY_FILE, "w") as f:
-                    json.dump(history, f, indent=2)
+                self._atomic_write(history)
                 
         except Exception as e:
-            log_error(f"Failed to update trade outcomes: {e}")
+            log_error(f"Failed to update outcomes: {e}")
 
-    def analyze_past_performance(self):
-        """Critique recent trades and generate lessons."""
+    def analyze_past_performance(self, max_trades=3) -> str:
+        """
+        Critique recent closed trades using the Brain.
+        Returns a summary string of results.
+        """
         log_ai("Running Post-Mortem Analysis...")
         
         try:
-            if not os.path.exists(HISTORY_FILE):
-                return "No trade history found."
-
-            with open(HISTORY_FILE, "r") as f:
-                history = json.load(f)
+            history = self._load_history()
             
-            # Filter for closed trades without critique
-            to_analyze = [t for t in history if t["status"] == "CLOSED" and not t.get("critique")]
+            # Filter: Closed, PnL calculated, No critique yet
+            to_analyze = [
+                t for t in history 
+                if t["status"] == "CLOSED" 
+                and t.get("pnl_usd") is not None
+                and not t.get("critique")
+            ]
             
             if not to_analyze:
-                log_info("No new closed trades to analyze.")
-                return "No new trades to analyze."
+                log_info("No eligible trades for analysis.")
+                return "No new closed trades to analyze."
             
             brain = get_brain()
-            lessons = []
+            new_lessons = []
             
-            for trade in to_analyze[-3:]: # Analyze last 3 max
-                log_ai(f"Critiquing trade: {trade['ticker']}...")
+            # Process last N trades
+            for trade in to_analyze[-max_trades:]:
+                log_ai(f"Critiquing {trade['ticker']} (PnL: {trade['pnl_usd']})...")
+                
                 prompt = self._build_critique_prompt(trade)
                 
-                # Use brain to call API
-                response = brain._call_ai_api(prompt, ticker=trade["ticker"])
+                # Call Brain public method (safe)
+                response = brain.run_critique(prompt, ticker=trade["ticker"])
                 
-                # Extract lesson
+                # Extract clean lesson
                 lesson = self._extract_lesson(response)
                 
                 trade["critique"] = response
                 if lesson:
                     trade["lesson"] = lesson
-                    lessons.append(lesson)
+                    new_lessons.append(lesson)
+                    log_ok(f"Generated Lesson: {lesson}")
             
-            # Save updated history
-            with open(HISTORY_FILE, "w") as f:
-                json.dump(history, f, indent=2)
+            # Save critiques
+            self._atomic_write(history)
             
-            # Append unique lessons to file
-            if lessons:
-                count = self._append_lessons(lessons)
-                return f"Learned {count} new lessons."
+            # Append to lessons file
+            if new_lessons:
+                count = self._append_lessons(new_lessons)
+                return f"Learned {count} new lessons from {len(to_analyze)} trades."
             
-            return "Analysis complete. No new significant lessons."
+            return f"Analyzed {len(to_analyze)} trades but no new significant lessons found."
             
         except Exception as e:
             log_error(f"Analysis failed: {e}")
-            return f"Error: {e}"
+            return f"Error during analysis: {e}"
 
     def _build_critique_prompt(self, trade):
-        context = trade.get('market_context', {})
+        """Construct a detailed prompt for the Teacher Agent."""
+        ctx = trade.get('market_context', {})
+        pnl_str = f"${trade.get('pnl_usd')} ({trade.get('pnl_pct')}%)"
+        
         return f"""
-# POST-MORTEM ANALYSIS
+# POST-MORTEM TRADING ANALYSIS
 
-I made a trade that is now CLOSED. I need you to critique it and provide a LESSON LEARNED.
+## SCENARIO
+I executed a trade based on your analysis. It is now closed.
+Your goal is to critique the decision process and extract a generalized LESSON.
 
-## TRADE DETAILS
-- Ticker: {trade.get('ticker')}
-- Action: {trade.get('action')}
-- Date: {trade.get('entry_time')}
-- Reasoning: {trade.get('reasoning')}
+## TRADE DATA
+- **Ticker:** {trade.get('ticker')}
+- **Action:** {trade.get('action')}
+- **Entry:** ${trade.get('filled_entry_price')}
+- **Exit:** ${trade.get('filled_exit_price')}
+- **Result:** {pnl_str}
+- **Exit Reason:** {trade.get('exit_reason')}
+- **Original Reasoning:** "{trade.get('reasoning')}"
 
 ## MARKET CONTEXT (At Entry)
-- Price: {context.get('price')}
-- RSI: {context.get('rsi')}
-- Volume Ratio: {context.get('volume_ratio')}
-- Sector: {context.get('sector')}
+- Price: {ctx.get('price')}
+- RSI: {ctx.get('rsi')}
+- Vol Ratio: {ctx.get('volume_ratio')}
+- Sector: {ctx.get('sector')}
 
-## OUTCOME
-The trade is closed. 
-(Note: Exact PnL is not provided, so assume we need to verify if the ENTRY LOGIC was sound based on the context).
-
-## TASK
-1. Critique the reasoning. Was it too aggressive? Did I ignore the RSI?
-2. Provide a single, concise "LESSON" that I can add to my system prompt to avoid this mistake (or reinforce this success) in the future.
-3. Format: "LESSON: [Your lesson here]"
-
+## YOUR TASK
+1. Analyze WHY the trade succeeded or failed.
+2. Was the original reasoning sound? Did we ignore a red flag (like high RSI, low volume)?
+3. Formulate a SINGLE, concise lesson rule.
+   - Good: "Avoid buying breakouts when volume ratio is < 1.0"
+   - Bad: "Don't buy TSLA next time" (Too specific)
+   
+## OUTPUT FORMAT
+Return ONLY the lesson line starting with "LESSON:".
 Example:
-LESSON: Avoid entering long positions when RSI is above 75, even if news is good.
+LESSON: Always wait for RSI to cool down below 70 before long entries.
 """
 
-    def _extract_lesson(self, text):
-        match = re.search(r"LESSON: (.*)", text, re.IGNORECASE)
+    def _extract_lesson(self, text: str) -> Optional[str]:
+        """Strict extraction of LESSON: line."""
+        # Clean text
+        text = text.strip()
+        
+        # Look for explicit prefix
+        match = re.search(r"LESSON:\s*(.*)", text, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            candidate = match.group(1).strip()
+            # Validation: Length check (10-150 chars)
+            if 10 < len(candidate) < 150:
+                return candidate
+        
         return None
 
-    def _append_lessons(self, new_lessons):
-        count = 0
+    def _append_lessons(self, new_lessons: List[str]) -> int:
+        """Append unique lessons to file."""
+        added_count = 0
         try:
-            existing_lessons = set()
+            # Load existing
+            existing = set()
             if os.path.exists(LESSONS_FILE):
                 with open(LESSONS_FILE, "r", encoding='utf-8') as f:
                     for line in f:
-                        if line.strip() and not line.startswith("#"):
-                            existing_lessons.add(line.strip().lstrip("- "))
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            existing.add(line.lstrip("- "))
             
+            # Append new
             with open(LESSONS_FILE, "a", encoding='utf-8') as f:
-                # Add newline if file is not empty and doesn't end with one
                 if os.path.getsize(LESSONS_FILE) > 0:
                     f.write("\n")
-                    
+                
                 for lesson in new_lessons:
-                    clean_lesson = lesson.replace("\n", " ").strip()
-                    if clean_lesson not in existing_lessons:
-                        f.write(f"- {clean_lesson}\n")
-                        log_ok(f"New Lesson Learned: {clean_lesson}")
-                        count += 1
-                        existing_lessons.add(clean_lesson)
-            return count
-                        
+                    clean = lesson.replace("\n", " ").strip()
+                    if clean not in existing:
+                        f.write(f"- {clean}\n")
+                        existing.add(clean)
+                        added_count += 1
+            
+            return added_count
         except Exception as e:
             log_error(f"Failed to save lessons: {e}")
             return 0
 
-_engine_instance = None
+_instance = None
 def get_learning_engine():
-    global _engine_instance
-    if _engine_instance is None:
-        _engine_instance = LearningEngine()
-    return _engine_instance
+    global _instance
+    if _instance is None:
+        _instance = LearningEngine()
+    return _instance
