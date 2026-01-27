@@ -370,41 +370,23 @@ class AIBrain:
         except (ValueError, TypeError):
             return str(value)
     
-    def _load_lessons_learned(self) -> str:
-        """Read lessons from configuration file."""
+    def _load_lessons(self) -> str:
+        """Load lessons learned from config file."""
         lessons_file = "config/lessons_learned.txt"
-        if not os.path.exists(lessons_file):
-            return ""
-        
-        try:
-            with open(lessons_file, "r", encoding='utf-8') as f:
-                content = f.read().strip()
+        if os.path.exists(lessons_file):
+            try:
+                with open(lessons_file, "r", encoding='utf-8') as f:
+                    content = f.read().strip()
                 if content:
-                    # Remove comment lines
-                    lines = [l for l in content.split('\n') if not l.startswith('#')]
-                    return "\n".join(lines)
-        except Exception as e:
-            log_warn(f"Failed to load lessons: {e}")
-        
+                    return f"\n\n### 🧠 PAST LESSONS LEARNED (IMPORTANT):\n{content}\n"
+            except Exception as e:
+                log_warn(f"Failed to load lessons: {e}")
         return ""
 
     def _build_user_prompt(self, market_data: Dict[str, Any]) -> str:
-        """Build the enhanced user prompt with injected market data and lessons learned."""
+        """Build the enhanced user prompt with injected market data and lessons."""
         
         ticker = market_data.get("ticker", "UNKNOWN")
-        lessons = self._load_lessons_learned()
-        
-        # Inject lessons block if available
-        lessons_block = ""
-        if lessons:
-            lessons_block = f"""
-### 🧠 PAST LESSONS LEARNED (DO NOT REPEAT MISTAKES):
-The following are lessons learned from previous trade post-mortems. 
-Use them to FILTER your decision. If a setup violates a lesson, PASS.
-
-{lessons}
----
-"""
         
         # Extract and format values
         current_price = market_data.get('price', 'N/A')
@@ -443,10 +425,11 @@ Use them to FILTER your decision. If a setup violates a lesson, PASS.
             news_items = [f"- {n['title']}" for n in market_data["news"]]
             news_headlines_formatted = "\n".join(news_items)
         
+        # Inject lessons
+        lessons_section = self._load_lessons()
+
         prompt = f"""
 # 🚨 MARKET DATA ALERT: {ticker}
-
-{lessons_block}
 
 ### 1. LIVE PRICE ACTION
 - **Price:** ${current_price}
@@ -468,6 +451,8 @@ Use them to FILTER your decision. If a setup violates a lesson, PASS.
 
 ### 4. NEWS CATALYSTS (Last 24h)
 {news_headlines_formatted}
+
+{lessons_section}
 
 ---
 ### ⚡ YOUR TASK:
@@ -658,6 +643,13 @@ RETURN JSON ONLY.
         
         return trade_json
     
+    def run_critique(self, user_prompt: str, ticker: str = "???") -> str:
+        """
+        Public method to run a critique query against the LLM.
+        Safe wrapper for external modules.
+        """
+        return self._call_ai_api(user_prompt, ticker=ticker)
+
     def _call_ai_api(self, user_prompt: str, ticker: str = "???") -> str:
         """
         Call the AI API with:
@@ -688,14 +680,6 @@ RETURN JSON ONLY.
         finally:
             # Always release the lock
             single_flight.release(request_id)
-            
-    def run_critique(self, prompt: str, ticker: str = "LESSON_LEARNED") -> str:
-        """
-        Public method to run critique prompts safely.
-        Uses the same rate limiting and retry logic as main analysis.
-        """
-        log_info(f"Running Critique for {ticker}...")
-        return self._call_ai_api(prompt, ticker=ticker)
     
     @retry_with_backoff_jitter(max_retries=5, base_delay=5.0, max_delay=90.0, jitter_factor=0.2)
     def _execute_api_call(self, user_prompt: str, request_id: str = "???", ticker: str = "???") -> str:
@@ -979,3 +963,4 @@ if __name__ == "__main__":
     
     print("\n" + "="*50 + "\n")
     print(brain.format_hebrew_response(result))
+
