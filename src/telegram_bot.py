@@ -36,6 +36,7 @@ from src.rate_limiter import (
 )
 from src.analysis_cache import get_analysis_cache, AnalysisCache
 from src.news_brain import get_news_brain, NewsBrain
+from src.learning_engine import get_learning_engine  # NEW: Import Learning Engine
 
 
 class TelegramCIOBot:
@@ -474,6 +475,12 @@ class TelegramCIOBot:
             log_alpaca(f"Order submitted successfully! ID: {result['order_id']}", success=True)
             log_ok(f"🎉 Trade executed: {action} {qty}x {ticker}")
             
+            # --- LOG TRADE TO LEARNING ENGINE ---
+            if not is_test:
+                 get_learning_engine().log_trade_entry(trade_data, result["order_id"])
+                 log_info("Trade logged to Learning Engine")
+            # ------------------------------------
+
             # Get risk description
             risk_desc = trade_data.get("risk_desc", f"${trade_data.get('risk', 0):.2f}")
             
@@ -590,9 +597,34 @@ Please check Alpaca dashboard.
             self._cmd_turbo(args_str)
         elif command == "/autotrade":
             self._cmd_autotrade(args_str)
+        elif command == "/learn":
+             self._cmd_learn()
         else:
             self.send_message(f"❓ פקודה לא מוכרת: `{command}`\nשלח /help לעזרה")
     
+    def _cmd_learn(self):
+        """Trigger learning loop manually."""
+        if not self.alpaca_client:
+            self.send_message("❌ Alpaca לא מחובר - לא ניתן לסנכרן טריידים.")
+            return
+
+        self.send_message("🧠 **מתחיל תהליך למידה...**\n🔄 מסנכרן טריידים ומנתח ביצועים.")
+        
+        try:
+            engine = get_learning_engine()
+            
+            # Sync closed trades
+            engine.update_trade_outcomes(self.alpaca_client)
+            
+            # Run post-mortem
+            result_msg = engine.analyze_past_performance()
+            
+            self.send_message(f"🧠 **תוצאות למידה:**\n\n{result_msg}")
+            
+        except Exception as e:
+             log_error(f"Learning failed: {e}")
+             self.send_message(f"❌ שגיאה בלמידה: {e}")
+
     def _cmd_analyze(self, args: List[str]):
         """Handle /analyze TICKER command with execution buttons."""
         if not args:
@@ -1468,6 +1500,9 @@ _More aggressive, more trades._
 `/autotrade high` - רק HIGH conviction
 `/autotrade med` - MED+ conviction
 
+🧠 **Self-Learning:**
+`/learn` - הפעל ניתוח ביצועים ולמידה
+
 📊 **Logic Engines:**
 • Sympathy - מסחר סימפטיה
 • Squeeze - Short/Gamma Squeeze
@@ -1696,6 +1731,11 @@ _More aggressive, more trades._
         
         if result["success"]:
             log_ok(f"🤖✅ AUTO-TRADE SUCCESS: {action} {qty}x {ticker}")
+            
+            # --- LOG TRADE TO LEARNING ENGINE ---
+            get_learning_engine().log_trade_entry(trade_data, result["order_id"])
+            log_info("Auto-trade logged to Learning Engine")
+            # ------------------------------------
             
             success_msg = f"""🤖✅ **AUTO-TRADE EXECUTED!**
 
