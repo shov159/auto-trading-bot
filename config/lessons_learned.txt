@@ -2,3 +2,5 @@
 # This file is automatically updated by the Learning Engine.
 
 - Avoid taking trades with less than 1.5 relative volume unless there is major news.
+
+- Avoid buying when RSI is above 80.

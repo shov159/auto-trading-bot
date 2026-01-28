@@ -641,8 +641,6 @@ RETURN JSON ONLY.
             trade_json["reasoning"] = f"{reasoning}\n\n📋 **Validation:** {' | '.join(validation_notes)}"
 
         return trade_json
-<<<<<<< HEAD
-=======
 
     def run_critique(self, user_prompt: str, ticker: str = "???") -> str:
         """
@@ -650,7 +648,7 @@ RETURN JSON ONLY.
         Safe wrapper for external modules.
         """
         return self._call_ai_api(user_prompt, ticker=ticker)
->>>>>>> 12688dc2de1199ee5b645bb658d315c914dd700c
+
 
     def _call_ai_api(self, user_prompt: str, ticker: str = "???") -> str:
         """
@@ -682,10 +680,6 @@ RETURN JSON ONLY.
         finally:
             # Always release the lock
             single_flight.release(request_id)
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-=======
 
     def run_critique(self, prompt: str, ticker: str = "LESSON_LEARNED") -> str:
         """
@@ -694,10 +688,7 @@ RETURN JSON ONLY.
         """
         log_info(f"Running Critique for {ticker}...")
         return self._call_ai_api(prompt, ticker=ticker)
-=======
->>>>>>> 12688dc2de1199ee5b645bb658d315c914dd700c
 
->>>>>>> 81430df63ff5904781a9a446cc11ee32ae0becaf
     @retry_with_backoff_jitter(max_retries=5, base_delay=5.0, max_delay=90.0, jitter_factor=0.2)
     def _execute_api_call(self, user_prompt: str, request_id: str = "???", ticker: str = "???") -> str:
         """

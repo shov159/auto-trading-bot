@@ -5,7 +5,6 @@ echo Risk Manager: ACTIVE
 echo Strategy: PPO (Anchor) + A2C (Reactor) + DDPG (Sniper)
 echo ================================================
 
-uv run python src/main.py
+uv run python src/telegram_bot.py
 
 pause
-
